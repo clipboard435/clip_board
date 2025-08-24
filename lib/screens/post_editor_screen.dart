@@ -28,9 +28,34 @@ class _PostEditorScreenState extends State<PostEditorScreen> {
 
   bool submitting = false;
 
-  final genres = <String>[
-    'お出かけ', 'ファッション', 'グルメ', '暮らし', '学び', 'スポーツ'
-  ];
+  final genres = <String>['お出かけ', 'ファッション', 'グルメ', '暮らし', '学び', 'スポーツ'];
+
+  // ===== ユーティリティ =====
+  String _guessImageContentType(String name) {
+    final n = name.toLowerCase();
+    if (n.endsWith('.png')) return 'image/png';
+    if (n.endsWith('.webp')) return 'image/webp';
+    if (n.endsWith('.gif')) return 'image/gif';
+    // heic/heif はブラウザ互換のため image/jpeg に寄せることが多い
+    return 'image/jpeg';
+  }
+
+  String _guessVideoContentType(String name) {
+    final n = name.toLowerCase();
+    if (n.endsWith('.webm')) return 'video/webm';
+    if (n.endsWith('.mov')) return 'video/quicktime';
+    if (n.endsWith('.mkv')) return 'video/x-matroska';
+    return 'video/mp4';
+  }
+
+  /// キャッシュを抑止するメタデータ（開発中推奨）
+  SettableMetadata _noCacheMeta({required String contentType}) {
+    return SettableMetadata(
+      contentType: contentType,
+      cacheControl: 'no-store, no-cache, max-age=0, must-revalidate',
+      // 必要ならカスタムメタ: customMetadata: {'v': DateTime.now().millisecondsSinceEpoch.toString()},
+    );
+  }
 
   // 画像選択（複数）
   Future<void> pickImages() async {
@@ -58,7 +83,7 @@ class _PostEditorScreenState extends State<PostEditorScreen> {
     if (result != null && result.files.single.bytes != null) {
       setState(() {
         videoBytes = result.files.single.bytes!;
-        videoName  = result.files.single.name;
+        videoName = result.files.single.name;
       });
     }
   }
@@ -66,9 +91,7 @@ class _PostEditorScreenState extends State<PostEditorScreen> {
   Future<void> submit() async {
     if (submitting) return;
 
-    if (descCtrl.text.trim().isEmpty &&
-        imageBytes.isEmpty &&
-        videoBytes == null) {
+    if (descCtrl.text.trim().isEmpty && imageBytes.isEmpty && videoBytes == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('説明・写真・動画のいずれかを追加してください')),
       );
@@ -87,37 +110,43 @@ class _PostEditorScreenState extends State<PostEditorScreen> {
       final user = FirebaseAuth.instance.currentUser!;
       final now = DateTime.now().millisecondsSinceEpoch;
 
-      // 画像アップロード
+      // 画像アップロード（キャッシュ抑止）
       final imageUrls = <String>[];
       for (var i = 0; i < imageBytes.length; i++) {
         final name = imageNames.elementAt(i);
         final path = 'posts/${user.uid}/images/$now-$i-$name';
-        final ref  = FirebaseStorage.instance.ref(path);
-        final meta = SettableMetadata(contentType: 'image/jpeg');
+        final ref = FirebaseStorage.instance.ref(path);
+        final meta = _noCacheMeta(contentType: _guessImageContentType(name));
+
         await ref.putData(imageBytes[i], meta);
-        imageUrls.add(await ref.getDownloadURL());
+        final url = await ref.getDownloadURL();
+        imageUrls.add(url);
       }
 
-      // 動画アップロード
+      // 動画アップロード（キャッシュ抑止）
       String videoUrl = '';
       if (videoBytes != null) {
-        final path = 'posts/${user.uid}/videos/$now-${videoName ?? 'video.mp4'}';
-        final ref  = FirebaseStorage.instance.ref(path);
-        final meta = SettableMetadata(contentType: 'video/mp4'); // 拡張子に応じて変えてOK
+        final vName = videoName ?? 'video.mp4';
+        final path = 'posts/${user.uid}/videos/$now-$vName';
+        final ref = FirebaseStorage.instance.ref(path);
+        final meta = _noCacheMeta(contentType: _guessVideoContentType(vName));
+
         await ref.putData(videoBytes!, meta);
         videoUrl = await ref.getDownloadURL();
       }
 
       // Firestoreへ保存
       await FirebaseFirestore.instance.collection('posts').add({
-        'text'      : descCtrl.text.trim(),
-        'images'    : imageUrls,      // ← 複数
-        'videoUrl'  : videoUrl,       // ← 1本
-        'genre'     : genre,
-        'address'   : addressCtrl.text.trim(),
-        'userId'    : user.uid,
-        'userName'  : user.displayName ?? user.email ?? '',
-        'createdAt' : FieldValue.serverTimestamp(),
+        'text': descCtrl.text.trim(),
+        'images': imageUrls, // 複数
+        'videoUrl': videoUrl, // 1本
+        'genre': genre,
+        'address': addressCtrl.text.trim(),
+        'userId': user.uid,
+        'userName': user.displayName ?? user.email ?? '',
+        'createdAt': FieldValue.serverTimestamp(),
+        // クライアント側キャッシュバスター用にversionを持たせたい場合は↓
+        // 'version': now,
       });
 
       if (mounted) {
@@ -238,9 +267,7 @@ class _PostEditorScreenState extends State<PostEditorScreen> {
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
               value: genre,
-              items: genres
-                  .map((g) => DropdownMenuItem(value: g, child: Text(g)))
-                  .toList(),
+              items: genres.map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(),
               onChanged: (v) => setState(() => genre = v),
               decoration: const InputDecoration(border: OutlineInputBorder()),
             ),
