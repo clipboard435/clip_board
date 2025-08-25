@@ -10,16 +10,24 @@ class PostCard extends StatefulWidget {
     required this.images,
     required this.userName,
     required this.text,
+    // いいね
     this.likedBy = const <String>[],
     this.likeCount = 0,
+    // クリップ（お気に入り）
+    this.clippedBy = const <String>[],
+    this.clipCount = 0,
   });
 
   final String postId;
   final List<String> images;
   final String userName;
   final String text;
+
   final List<String> likedBy;
   final int likeCount;
+
+  final List<String> clippedBy;
+  final int clipCount;
 
   @override
   State<PostCard> createState() => _PostCardState();
@@ -29,7 +37,8 @@ class _PostCardState extends State<PostCard> {
   bool _expanded = false;
   int _commentLimit = 5;
   final _commentCtrl = TextEditingController();
-  bool _toggling = false; // 連打防止
+  bool _busyLike = false;
+  bool _busyClip = false;
 
   @override
   void dispose() {
@@ -38,13 +47,13 @@ class _PostCardState extends State<PostCard> {
   }
 
   Future<void> _toggleLike() async {
-    if (_toggling) return;
-    _toggling = true;
+    if (_busyLike) return;
+    _busyLike = true;
 
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ログインしてください')));
-      _toggling = false;
+      _busyLike = false;
       return;
     }
 
@@ -54,7 +63,7 @@ class _PostCardState extends State<PostCard> {
         final snap = await tx.get(ref);
         if (!snap.exists) return;
         final data = snap.data() as Map<String, dynamic>;
-        final List liked = (data['likedBy'] as List?)?.whereType<String>().toList() ?? <String>[];
+        final List liked = (data['likedBy'] as List?)?.whereType<String>().toList() ?? [];
         final int count = (data['likeCount'] ?? 0) as int;
 
         if (liked.contains(uid)) {
@@ -74,7 +83,48 @@ class _PostCardState extends State<PostCard> {
         SnackBar(content: Text('いいねに失敗しました: $e')),
       );
     } finally {
-      _toggling = false;
+      _busyLike = false;
+    }
+  }
+
+  Future<void> _toggleClip() async {
+    if (_busyClip) return;
+    _busyClip = true;
+
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ログインしてください')));
+      _busyClip = false;
+      return;
+    }
+
+    final ref = FirebaseFirestore.instance.collection('posts').doc(widget.postId);
+    try {
+      await FirebaseFirestore.instance.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        if (!snap.exists) return;
+        final data = snap.data() as Map<String, dynamic>;
+        final List clipped = (data['clippedBy'] as List?)?.whereType<String>().toList() ?? [];
+        final int count = (data['clipCount'] ?? 0) as int;
+
+        if (clipped.contains(uid)) {
+          tx.update(ref, {
+            'clippedBy': FieldValue.arrayRemove([uid]),
+            'clipCount': count > 0 ? count - 1 : 0,
+          });
+        } else {
+          tx.update(ref, {
+            'clippedBy': FieldValue.arrayUnion([uid]),
+            'clipCount': count + 1,
+          });
+        }
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('クリップに失敗しました: $e')),
+      );
+    } finally {
+      _busyClip = false;
     }
   }
 
@@ -112,10 +162,10 @@ class _PostCardState extends State<PostCard> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    final safeImages =
+    final images =
         (widget.images as List?)?.whereType<String>().map((s) => s.trim()).toList() ?? <String>[];
-    final bool isLiked = uid != null && widget.likedBy.contains(uid);
-    final int likeCount = widget.likeCount;
+    final isLiked = uid != null && widget.likedBy.contains(uid);
+    final isClipped = uid != null && widget.clippedBy.contains(uid);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -125,48 +175,56 @@ class _PostCardState extends State<PostCard> {
           // 画像（複数ならスワイプ）
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: safeImages.isEmpty
+            child: images.isEmpty
                 ? Container(
                     height: 280,
                     color: Colors.black12,
                     alignment: Alignment.center,
                     child: const Text('画像なし'),
                   )
-                : _ImagesPager(urls: safeImages),
+                : _ImagesPager(urls: images),
           ),
           const SizedBox(height: 8),
 
-          // ユーザー名＋アクション（カート＋♡＋添付）
+          // ユーザー名＋アクション（🛒 / ♡ / 📎）
           Row(
             children: [
               const CircleAvatar(radius: 12, child: Icon(Icons.person, size: 14)),
               const SizedBox(width: 8),
               Expanded(child: Text(widget.userName, style: theme.textTheme.bodyMedium)),
 
-              // 🛒 カート
+              // 🛒
               IconButton(
                 onPressed: _onTapCart,
                 icon: const Icon(Icons.shopping_cart_outlined),
                 tooltip: 'カートに追加',
               ),
 
-              // ♡ いいね
+              // ♡（いいね数のみ）
               Row(
                 children: [
                   IconButton(
                     onPressed: _toggleLike,
-                    icon: Icon(
-                      isLiked ? Icons.favorite : Icons.favorite_border,
-                      color: isLiked ? Colors.red : null,
-                    ),
+                    icon: Icon(isLiked ? Icons.favorite : Icons.favorite_border,
+                        color: isLiked ? Colors.red : null),
                     tooltip: isLiked ? 'いいね解除' : 'いいね',
                   ),
-                  Text('$likeCount'),
+                  Text('${widget.likeCount}'),
                 ],
               ),
 
-              // 添付など（将来用）
-              IconButton(onPressed: () {}, icon: const Icon(Icons.attach_file)),
+              // 📎（Favorites 用）
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: _toggleClip,
+                    icon: Icon(isClipped ? Icons.bookmark : Icons.bookmark_border,
+                        color: isClipped ? Colors.blue : null),
+                    tooltip: isClipped ? 'クリップ解除' : 'クリップ',
+                  ),
+                  Text('${widget.clipCount}'),
+                ],
+              ),
             ],
           ),
 
@@ -183,10 +241,8 @@ class _PostCardState extends State<PostCard> {
             TextButton(
               style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero),
               onPressed: () => setState(() => _expanded = !_expanded),
-              child: Text(
-                _expanded ? '閉じる' : '続きを読む',
-                style: const TextStyle(decoration: TextDecoration.underline),
-              ),
+              child: Text(_expanded ? '閉じる' : '続きを読む',
+                  style: const TextStyle(decoration: TextDecoration.underline)),
             ),
           ],
 
@@ -250,7 +306,7 @@ class _PostCardState extends State<PostCard> {
                             Expanded(
                               child: RichText(
                                 text: TextSpan(
-                                  style: theme.textTheme.bodyMedium,
+                                  style: Theme.of(context).textTheme.bodyMedium,
                                   children: [
                                     TextSpan(
                                       text: '$name  ',
@@ -302,7 +358,7 @@ class _PostCardState extends State<PostCard> {
   }
 }
 
-/// 画像ページャ（複数画像をスワイプ・ドットで表示）
+/// 画像ページャ（複数画像をスワイプ・ドットで表示 / 画像は全体が見える）
 class _ImagesPager extends StatefulWidget {
   const _ImagesPager({required this.urls});
   final List<String> urls;
@@ -327,14 +383,14 @@ class _ImagesPagerState extends State<_ImagesPager> {
       alignment: Alignment.bottomCenter,
       children: [
         SizedBox(
-          height: 360, // 上限（必要に応じて調整）
+          height: 360,
           width: double.infinity,
           child: PageView.builder(
             controller: _pc,
             itemCount: widget.urls.length,
             onPageChanged: (i) => setState(() => _index = i),
             itemBuilder: (_, i) => FittedBox(
-              fit: BoxFit.contain, // 画像全体が見える（縦長/横長問わず）
+              fit: BoxFit.contain, // 画像全体が見える
               child: Image.network(
                 widget.urls[i],
                 gaplessPlayback: true,
