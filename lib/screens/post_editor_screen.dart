@@ -1,3 +1,4 @@
+// lib/screens/post_editor_screen.dart
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -19,61 +20,61 @@ class _PostEditorScreenState extends State<PostEditorScreen> {
   String? genre;
 
   // 画像（複数）
-  List<Uint8List> imageBytes = [];
-  List<String> imageNames = [];
+  static const int kMaxImages = 10;
+  final List<Uint8List> imageBytes = [];
+  final List<String> imageNames = [];
 
-  // 動画（1本）
+  // 動画（任意・1本）
   Uint8List? videoBytes;
   String? videoName;
 
   bool submitting = false;
 
-  final genres = <String>['お出かけ', 'ファッション', 'グルメ', '暮らし', '学び', 'スポーツ'];
+  final genres = <String>[
+    'お出かけ', 'ファッション', 'グルメ', '暮らし', '学び', 'スポーツ'
+  ];
 
-  // ===== ユーティリティ =====
-  String _guessImageContentType(String name) {
-    final n = name.toLowerCase();
-    if (n.endsWith('.png')) return 'image/png';
-    if (n.endsWith('.webp')) return 'image/webp';
-    if (n.endsWith('.gif')) return 'image/gif';
-    // heic/heif はブラウザ互換のため image/jpeg に寄せることが多い
-    return 'image/jpeg';
-  }
-
-  String _guessVideoContentType(String name) {
-    final n = name.toLowerCase();
-    if (n.endsWith('.webm')) return 'video/webm';
-    if (n.endsWith('.mov')) return 'video/quicktime';
-    if (n.endsWith('.mkv')) return 'video/x-matroska';
-    return 'video/mp4';
-  }
-
-  /// キャッシュを抑止するメタデータ（開発中推奨）
-  SettableMetadata _noCacheMeta({required String contentType}) {
-    return SettableMetadata(
-      contentType: contentType,
-      cacheControl: 'no-store, no-cache, max-age=0, must-revalidate',
-      // 必要ならカスタムメタ: customMetadata: {'v': DateTime.now().millisecondsSinceEpoch.toString()},
-    );
-  }
-
-  // 画像選択（複数）
+  // 画像選択（追加型 & 上限10枚）
   Future<void> pickImages() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
       allowMultiple: true,
-      withData: true, // Webでbytesを得る
+      withData: true,
     );
-    if (result != null) {
-      final files = result.files.where((f) => f.bytes != null).toList();
-      setState(() {
-        imageBytes = files.map((f) => f.bytes!).toList();
-        imageNames = files.map((f) => f.name).toList();
-      });
+    if (result == null) return;
+
+    final files = result.files.where((f) => f.bytes != null).toList();
+    final remain = kMaxImages - imageBytes.length;
+
+    if (remain <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('画像は最大10枚までです')),
+      );
+      return;
+    }
+
+    final toAdd = files.take(remain).toList();
+    setState(() {
+      imageBytes.addAll(toAdd.map((f) => f.bytes!));
+      imageNames.addAll(toAdd.map((f) => f.name));
+    });
+
+    if (files.length > remain) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('最大$kMaxImages枚までです（超過分は無視しました）')),
+      );
     }
   }
 
-  // 動画選択（1本）
+  // サムネ削除
+  void removeImageAt(int i) {
+    setState(() {
+      imageBytes.removeAt(i);
+      imageNames.removeAt(i);
+    });
+  }
+
+  // 動画選択（任意）
   Future<void> pickVideo() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.video,
@@ -83,7 +84,7 @@ class _PostEditorScreenState extends State<PostEditorScreen> {
     if (result != null && result.files.single.bytes != null) {
       setState(() {
         videoBytes = result.files.single.bytes!;
-        videoName = result.files.single.name;
+        videoName  = result.files.single.name;
       });
     }
   }
@@ -91,7 +92,9 @@ class _PostEditorScreenState extends State<PostEditorScreen> {
   Future<void> submit() async {
     if (submitting) return;
 
-    if (descCtrl.text.trim().isEmpty && imageBytes.isEmpty && videoBytes == null) {
+    if (descCtrl.text.trim().isEmpty &&
+        imageBytes.isEmpty &&
+        videoBytes == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('説明・写真・動画のいずれかを追加してください')),
       );
@@ -110,58 +113,65 @@ class _PostEditorScreenState extends State<PostEditorScreen> {
       final user = FirebaseAuth.instance.currentUser!;
       final now = DateTime.now().millisecondsSinceEpoch;
 
-      // 画像アップロード（キャッシュ抑止）
+      // 画像アップロード
       final imageUrls = <String>[];
       for (var i = 0; i < imageBytes.length; i++) {
-        final name = imageNames.elementAt(i);
+        final name = imageNames[i];
         final path = 'posts/${user.uid}/images/$now-$i-$name';
-        final ref = FirebaseStorage.instance.ref(path);
-        final meta = _noCacheMeta(contentType: _guessImageContentType(name));
-
+        final ref  = FirebaseStorage.instance.ref(path);
+        // NOTE: 厳密にするなら拡張子で contentType を切替
+        final meta = SettableMetadata(contentType: 'image/jpeg');
         await ref.putData(imageBytes[i], meta);
-        final url = await ref.getDownloadURL();
-        imageUrls.add(url);
+        imageUrls.add(await ref.getDownloadURL());
       }
 
-      // 動画アップロード（キャッシュ抑止）
+      // 動画アップロード（任意）
       String videoUrl = '';
       if (videoBytes != null) {
-        final vName = videoName ?? 'video.mp4';
-        final path = 'posts/${user.uid}/videos/$now-$vName';
-        final ref = FirebaseStorage.instance.ref(path);
-        final meta = _noCacheMeta(contentType: _guessVideoContentType(vName));
-
+        final safeName = (videoName ?? 'video.mp4').replaceAll(' ', '_');
+        final path = 'posts/${user.uid}/videos/$now-$safeName';
+        final ref  = FirebaseStorage.instance.ref(path);
+        final meta = SettableMetadata(contentType: 'video/mp4');
         await ref.putData(videoBytes!, meta);
         videoUrl = await ref.getDownloadURL();
       }
 
       // Firestoreへ保存
       await FirebaseFirestore.instance.collection('posts').add({
-        'text': descCtrl.text.trim(),
-        'images': imageUrls, // 複数
-        'videoUrl': videoUrl, // 1本
-        'genre': genre,
-        'address': addressCtrl.text.trim(),
-        'userId': user.uid,
-        'userName': user.displayName ?? user.email ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
-        // クライアント側キャッシュバスター用にversionを持たせたい場合は↓
-        // 'version': now,
+        'text'      : descCtrl.text.trim(),
+        'images'    : imageUrls,      // 複数URL
+        'videoUrl'  : videoUrl,       // 任意
+        'genre'     : genre,
+        'address'   : addressCtrl.text.trim(),
+        'userId'    : user.uid,
+        'userName'  : user.displayName ?? user.email ?? '',
+        'likeCount' : 0,
+        'likedBy'   : <String>[],
+        'createdAt' : FieldValue.serverTimestamp(),
       });
 
       if (mounted) {
-        Navigator.pop(context); // 投稿画面を閉じる
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('投稿しました')),
         );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('投稿に失敗しました: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('投稿に失敗しました: $e')),
+        );
+      }
     } finally {
       if (mounted) setState(() => submitting = false);
     }
+  }
+
+  @override
+  void dispose() {
+    descCtrl.dispose();
+    addressCtrl.dispose();
+    super.dispose();
   }
 
   @override
@@ -198,27 +208,52 @@ class _PostEditorScreenState extends State<PostEditorScreen> {
                 child: const Text('写真はまだありません'),
               )
             else
-              SizedBox(
-                height: 86,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: imageBytes.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (_, i) => ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.memory(
-                      imageBytes[i],
-                      width: 86,
-                      height: 86,
-                      fit: BoxFit.cover,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('選択中: ${imageBytes.length}/$kMaxImages'),
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    height: 86,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: imageBytes.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (_, i) => Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.memory(
+                              imageBytes[i],
+                              width: 86,
+                              height: 86,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                          Positioned(
+                            right: -8,
+                            top: -8,
+                            child: IconButton.filledTonal(
+                              icon: const Icon(Icons.close, size: 16),
+                              style: IconButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: const Size(24, 24),
+                              ),
+                              onPressed: () => removeImageAt(i),
+                              tooltip: 'この写真を外す',
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
 
             const SizedBox(height: 16),
 
-            // 動画
+            // 動画（任意）
             Text('動画', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             GestureDetector(

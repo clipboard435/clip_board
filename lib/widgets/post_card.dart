@@ -3,99 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// 画像の実寸から比率を算出し、トリミング無しで自然に見せる
-class AutoSizedNetworkImage extends StatefulWidget {
-  final String url;
-  final double maxHeight;
-  final BoxFit fit;
-
-  const AutoSizedNetworkImage({
-    super.key,
-    required this.url,
-    this.maxHeight = 360,
-    this.fit = BoxFit.contain,
-  });
-
-  @override
-  State<AutoSizedNetworkImage> createState() => _AutoSizedNetworkImageState();
-}
-
-class _AutoSizedNetworkImageState extends State<AutoSizedNetworkImage> {
-  double? _aspect;
-  ImageStream? _stream;
-  ImageStreamListener? _listener;
-
-  @override
-  void initState() {
-    super.initState();
-    _resolveImage();
-  }
-
-  @override
-  void didUpdateWidget(covariant AutoSizedNetworkImage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url) {
-      _aspect = null;
-      _unsubscribe();
-      _resolveImage();
-    }
-  }
-
-  @override
-  void dispose() {
-    _unsubscribe();
-    super.dispose();
-  }
-
-  void _unsubscribe() {
-    if (_stream != null && _listener != null) {
-      _stream!.removeListener(_listener!);
-    }
-    _stream = null;
-    _listener = null;
-  }
-
-  void _resolveImage() {
-    final img = Image.network(widget.url);
-    final stream = img.image.resolve(const ImageConfiguration());
-    _listener = ImageStreamListener((info, _) {
-      final w = info.image.width.toDouble();
-      final h = info.image.height.toDouble();
-      if (h != 0 && mounted) setState(() => _aspect = w / h);
-    }, onError: (_, __) {});
-    stream.addListener(_listener!);
-    _stream = stream;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, constraints) {
-      final width = constraints.maxWidth;
-      final aspect = _aspect ?? (4 / 3);
-      final expectedHeight = width / aspect;
-      final height = expectedHeight.clamp(160.0, widget.maxHeight);
-
-      return SizedBox(
-        height: height,
-        width: double.infinity,
-        child: Image.network(
-          widget.url,
-          fit: widget.fit,
-          key: ValueKey(widget.url),
-          gaplessPlayback: true,
-          loadingBuilder: (c, w, p) =>
-              p == null ? w : const Center(child: CircularProgressIndicator()),
-          errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.broken_image)),
-        ),
-      );
-    });
-  }
-}
-
-/// 一件分の投稿カード
-/// - 画像自動リサイズ表示
-/// - いいね（♡）トグル＋カウント表示
-/// - 「続きを読む」で本文全文＋コメント一覧＋コメント入力をその場に展開
 class PostCard extends StatefulWidget {
   const PostCard({
     super.key,
@@ -163,7 +70,9 @@ class _PostCardState extends State<PostCard> {
         }
       });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('いいねに失敗しました: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('いいねに失敗しました: $e')),
+      );
     } finally {
       _toggling = false;
     }
@@ -193,13 +102,18 @@ class _PostCardState extends State<PostCard> {
     }
   }
 
+  void _onTapCart() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('カートに追加（ダミー）')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final uid = FirebaseAuth.instance.currentUser?.uid;
     final safeImages =
         (widget.images as List?)?.whereType<String>().map((s) => s.trim()).toList() ?? <String>[];
-    final firstUrl = safeImages.isNotEmpty ? safeImages.first : null;
     final bool isLiked = uid != null && widget.likedBy.contains(uid);
     final int likeCount = widget.likeCount;
 
@@ -208,35 +122,35 @@ class _PostCardState extends State<PostCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 画像
+          // 画像（複数ならスワイプ）
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: firstUrl == null
+            child: safeImages.isEmpty
                 ? Container(
-                    height: 240,
+                    height: 280,
                     color: Colors.black12,
                     alignment: Alignment.center,
                     child: const Text('画像なし'),
                   )
-                : AutoSizedNetworkImage(url: firstUrl, maxHeight: 360, fit: BoxFit.contain),
+                : _ImagesPager(urls: safeImages),
           ),
           const SizedBox(height: 8),
 
-          // ユーザー名＋アクション（♡含む）
+          // ユーザー名＋アクション（カート＋♡＋添付）
           Row(
             children: [
               const CircleAvatar(radius: 12, child: Icon(Icons.person, size: 14)),
               const SizedBox(width: 8),
               Expanded(child: Text(widget.userName, style: theme.textTheme.bodyMedium)),
 
-              // 🛒 カート（復活）
+              // 🛒 カート
               IconButton(
-                onPressed: _onTapCart, // ← 後述の関数を追加
+                onPressed: _onTapCart,
                 icon: const Icon(Icons.shopping_cart_outlined),
                 tooltip: 'カートに追加',
               ),
 
-              // いいね
+              // ♡ いいね
               Row(
                 children: [
                   IconButton(
@@ -245,12 +159,13 @@ class _PostCardState extends State<PostCard> {
                       isLiked ? Icons.favorite : Icons.favorite_border,
                       color: isLiked ? Colors.red : null,
                     ),
+                    tooltip: isLiked ? 'いいね解除' : 'いいね',
                   ),
                   Text('$likeCount'),
                 ],
               ),
 
-              // 他アイコン（お好みで）
+              // 添付など（将来用）
               IconButton(onPressed: () {}, icon: const Icon(Icons.attach_file)),
             ],
           ),
@@ -275,13 +190,27 @@ class _PostCardState extends State<PostCard> {
             ),
           ],
 
-          // 展開部：本文全文＋コメント一覧＋入力
+          // 展開部：本文全文＋コメント一覧＋コメント入力
           if (_expanded) ...[
             if (widget.text.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(widget.text, style: const TextStyle(fontSize: 15, height: 1.5)),
               ),
+
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 4),
+              child: Row(
+                children: const [
+                  Expanded(child: Divider()),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Text('コメント', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                  Expanded(child: Divider()),
+                ],
+              ),
+            ),
 
             StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
@@ -371,16 +300,70 @@ class _PostCardState extends State<PostCard> {
       ),
     );
   }
+}
 
-  void _onTapCart() {
-    // TODO: ここに購買フロー遷移やカート追加処理を実装
-    // 例：別画面へ遷移
-    // Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseScreen(postId: widget.postId)));
+/// 画像ページャ（複数画像をスワイプ・ドットで表示）
+class _ImagesPager extends StatefulWidget {
+  const _ImagesPager({required this.urls});
+  final List<String> urls;
 
-    // ひとまずトーストで分かるように
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('カートに追加（ダミー）')),
+  @override
+  State<_ImagesPager> createState() => _ImagesPagerState();
+}
+
+class _ImagesPagerState extends State<_ImagesPager> {
+  final _pc = PageController();
+  var _index = 0;
+
+  @override
+  void dispose() {
+    _pc.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.bottomCenter,
+      children: [
+        SizedBox(
+          height: 360, // 上限（必要に応じて調整）
+          width: double.infinity,
+          child: PageView.builder(
+            controller: _pc,
+            itemCount: widget.urls.length,
+            onPageChanged: (i) => setState(() => _index = i),
+            itemBuilder: (_, i) => FittedBox(
+              fit: BoxFit.contain, // 画像全体が見える（縦長/横長問わず）
+              child: Image.network(
+                widget.urls[i],
+                gaplessPlayback: true,
+                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48),
+                loadingBuilder: (c, w, p) =>
+                    p == null ? w : const SizedBox(height: 200, child: Center(child: CircularProgressIndicator())),
+              ),
+            ),
+          ),
+        ),
+        if (widget.urls.length > 1)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Wrap(
+              spacing: 6,
+              children: List.generate(
+                widget.urls.length,
+                (i) => Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: i == _index ? Colors.white : Colors.white54,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
-  
 }
