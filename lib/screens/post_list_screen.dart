@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../widgets/post_card.dart';
+import 'account_screen.dart';
 import 'post_editor_screen.dart';
 import 'favorites_screen.dart';
 
@@ -83,6 +84,8 @@ class PostListScreen extends StatelessWidget {
             Navigator.push(context, MaterialPageRoute(builder: (_) => const PostEditorScreen()));
           } else if (index == 3) {
             Navigator.push(context, MaterialPageRoute(builder: (_) => const FavoritesScreen(columns: 3)));
+          } else if (index == 4) {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountScreen()));
           }
         },
       ),
