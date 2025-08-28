@@ -45,6 +45,7 @@ class PostListScreen extends StatelessWidget {
               final doc  = docs[i];
               final data = doc.data() as Map<String, dynamic>;
 
+              // 画像（複数 or 旧 imageUrl フォールバック）
               final images = (data['images'] as List?)
                       ?.whereType<String>()
                       .map((s) => s.trim())
@@ -54,11 +55,15 @@ class PostListScreen extends StatelessWidget {
                 images.add((data['imageUrl'] as String).trim());
               }
 
+              // ★ 投稿主 uid（users/{uid} を購読するために渡す）
+              final posterUid = (data['userId'] ?? data['uid'] ?? '').toString();
+
               return PostCard(
                 key: ValueKey(doc.id),
                 postId: doc.id,
                 images: images,
-                userName: (data['userName'] ?? 'ユーザー').toString(),
+                userId: posterUid, // ← 重要：プロフィール購読に使う
+                userName: (data['userName'] ?? 'ユーザー').toString(), // フォールバック
                 text: (data['text'] ?? '').toString(),
                 likedBy: (data['likedBy'] as List?)?.whereType<String>().toList() ?? <String>[],
                 likeCount: (data['likeCount'] ?? 0) as int,

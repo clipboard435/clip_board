@@ -8,12 +8,11 @@ class PostCard extends StatefulWidget {
     super.key,
     required this.postId,
     required this.images,
-    required this.userName,
+    required this.userName,   // フォールバック表示用
     required this.text,
-    // いいね
+    this.userId,              // users/{uid} を購読して最新プロフィールを表示
     this.likedBy = const <String>[],
     this.likeCount = 0,
-    // クリップ（お気に入り）
     this.clippedBy = const <String>[],
     this.clipCount = 0,
   });
@@ -23,9 +22,9 @@ class PostCard extends StatefulWidget {
   final String userName;
   final String text;
 
+  final String? userId;
   final List<String> likedBy;
   final int likeCount;
-
   final List<String> clippedBy;
   final int clipCount;
 
@@ -49,83 +48,63 @@ class _PostCardState extends State<PostCard> {
   Future<void> _toggleLike() async {
     if (_busyLike) return;
     _busyLike = true;
-
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ログインしてください')));
-      _busyLike = false;
-      return;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ログインしてください')));
+      }
+      _busyLike = false; return;
     }
-
     final ref = FirebaseFirestore.instance.collection('posts').doc(widget.postId);
     try {
       await FirebaseFirestore.instance.runTransaction((tx) async {
         final snap = await tx.get(ref);
         if (!snap.exists) return;
         final data = snap.data() as Map<String, dynamic>;
-        final List liked = (data['likedBy'] as List?)?.whereType<String>().toList() ?? [];
+        final List<String> liked = (data['likedBy'] as List?)?.whereType<String>().toList() ?? [];
         final int count = (data['likeCount'] ?? 0) as int;
-
         if (liked.contains(uid)) {
-          tx.update(ref, {
-            'likedBy': FieldValue.arrayRemove([uid]),
-            'likeCount': count > 0 ? count - 1 : 0,
-          });
+          tx.update(ref, {'likedBy': FieldValue.arrayRemove([uid]), 'likeCount': count > 0 ? count - 1 : 0});
         } else {
-          tx.update(ref, {
-            'likedBy': FieldValue.arrayUnion([uid]),
-            'likeCount': count + 1,
-          });
+          tx.update(ref, {'likedBy': FieldValue.arrayUnion([uid]), 'likeCount': count + 1});
         }
       });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('いいねに失敗しました: $e')),
-      );
-    } finally {
-      _busyLike = false;
-    }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('いいねに失敗しました: $e')));
+      }
+    } finally { _busyLike = false; }
   }
 
   Future<void> _toggleClip() async {
     if (_busyClip) return;
     _busyClip = true;
-
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ログインしてください')));
-      _busyClip = false;
-      return;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ログインしてください')));
+      }
+      _busyClip = false; return;
     }
-
     final ref = FirebaseFirestore.instance.collection('posts').doc(widget.postId);
     try {
       await FirebaseFirestore.instance.runTransaction((tx) async {
         final snap = await tx.get(ref);
         if (!snap.exists) return;
         final data = snap.data() as Map<String, dynamic>;
-        final List clipped = (data['clippedBy'] as List?)?.whereType<String>().toList() ?? [];
+        final List<String> clipped = (data['clippedBy'] as List?)?.whereType<String>().toList() ?? [];
         final int count = (data['clipCount'] ?? 0) as int;
-
         if (clipped.contains(uid)) {
-          tx.update(ref, {
-            'clippedBy': FieldValue.arrayRemove([uid]),
-            'clipCount': count > 0 ? count - 1 : 0,
-          });
+          tx.update(ref, {'clippedBy': FieldValue.arrayRemove([uid]), 'clipCount': count > 0 ? count - 1 : 0});
         } else {
-          tx.update(ref, {
-            'clippedBy': FieldValue.arrayUnion([uid]),
-            'clipCount': count + 1,
-          });
+          tx.update(ref, {'clippedBy': FieldValue.arrayUnion([uid]), 'clipCount': count + 1});
         }
       });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('クリップに失敗しました: $e')),
-      );
-    } finally {
-      _busyClip = false;
-    }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('クリップに失敗しました: $e')));
+      }
+    } finally { _busyClip = false; }
   }
 
   Future<void> _addComment() async {
@@ -141,14 +120,14 @@ class _PostCardState extends State<PostCard> {
           .add({
         'text': text,
         'userId': user.uid,
-        'userName': user.displayName ?? user.email ?? 'ユーザー',
+        'userName': user.displayName ?? user.email ?? 'ユーザー', // フォールバック
         'createdAt': FieldValue.serverTimestamp(),
       });
       _commentCtrl.clear();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('コメントに失敗しました: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('コメントに失敗しました: $e')));
+      }
     }
   }
 
@@ -161,11 +140,8 @@ class _PostCardState extends State<PostCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final uid = FirebaseAuth.instance.currentUser?.uid;
     final images =
         (widget.images as List?)?.whereType<String>().map((s) => s.trim()).toList() ?? <String>[];
-    final isLiked = uid != null && widget.likedBy.contains(uid);
-    final isClipped = uid != null && widget.clippedBy.contains(uid);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -186,44 +162,74 @@ class _PostCardState extends State<PostCard> {
           ),
           const SizedBox(height: 8),
 
-          // ユーザー名＋アクション（🛒 / ♡ / 📎）
+          // ここを「ユーザー名の横にボタン」を並べるレイアウトに戻す
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              const CircleAvatar(radius: 12, child: Icon(Icons.person, size: 14)),
-              const SizedBox(width: 8),
-              Expanded(child: Text(widget.userName, style: theme.textTheme.bodyMedium)),
+              // 左側：ユーザーアイコン＋名前（購読）
+              Expanded(
+                child: _UserHeader(userId: widget.userId, fallbackName: widget.userName),
+              ),
 
-              // 🛒
+              // 右側：アクション  🛒 / ♡ / 📎
               IconButton(
                 onPressed: _onTapCart,
                 icon: const Icon(Icons.shopping_cart_outlined),
                 tooltip: 'カートに追加',
               ),
 
-              // ♡（いいね数のみ）
-              Row(
-                children: [
-                  IconButton(
-                    onPressed: _toggleLike,
-                    icon: Icon(isLiked ? Icons.favorite : Icons.favorite_border,
-                        color: isLiked ? Colors.red : null),
-                    tooltip: isLiked ? 'いいね解除' : 'いいね',
-                  ),
-                  Text('${widget.likeCount}'),
-                ],
+              // ♡（いいね）— posts/{postId} を購読してライブ反映
+              StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance.collection('posts').doc(widget.postId).snapshots(),
+                builder: (context, snap) {
+                  List<String> likedBy = widget.likedBy;
+                  int likeCount = widget.likeCount;
+                  if (snap.hasData && snap.data!.exists) {
+                    final m = snap.data!.data()!;
+                    likedBy = (m['likedBy'] as List?)?.whereType<String>().toList() ?? <String>[];
+                    likeCount = (m['likeCount'] ?? 0) as int;
+                  }
+                  final uid = FirebaseAuth.instance.currentUser?.uid;
+                  final isLiked = uid != null && likedBy.contains(uid);
+                  return Row(
+                    children: [
+                      IconButton(
+                        onPressed: _toggleLike,
+                        icon: Icon(isLiked ? Icons.favorite : Icons.favorite_border,
+                            color: isLiked ? Colors.red : null),
+                        tooltip: isLiked ? 'いいね解除' : 'いいね',
+                      ),
+                      Text('$likeCount'),
+                    ],
+                  );
+                },
               ),
 
-              // 📎（Favorites 用）
-              Row(
-                children: [
-                  IconButton(
-                    onPressed: _toggleClip,
-                    icon: Icon(isClipped ? Icons.bookmark : Icons.bookmark_border,
-                        color: isClipped ? Colors.blue : null),
-                    tooltip: isClipped ? 'クリップ解除' : 'クリップ',
-                  ),
-                  Text('${widget.clipCount}'),
-                ],
+              // 📎（クリップ）— posts/{postId} を購読してライブ反映
+              StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance.collection('posts').doc(widget.postId).snapshots(),
+                builder: (context, snap) {
+                  List<String> clippedBy = widget.clippedBy;
+                  int clipCount = widget.clipCount;
+                  if (snap.hasData && snap.data!.exists) {
+                    final m = snap.data!.data()!;
+                    clippedBy = (m['clippedBy'] as List?)?.whereType<String>().toList() ?? <String>[];
+                    clipCount = (m['clipCount'] ?? 0) as int;
+                  }
+                  final uid = FirebaseAuth.instance.currentUser?.uid;
+                  final isClipped = uid != null && clippedBy.contains(uid);
+                  return Row(
+                    children: [
+                      IconButton(
+                        onPressed: _toggleClip,
+                        icon: Icon(isClipped ? Icons.bookmark : Icons.bookmark_border,
+                            color: isClipped ? Colors.blue : null),
+                        tooltip: isClipped ? 'クリップ解除' : 'クリップ',
+                      ),
+                      Text('$clipCount'),
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -268,6 +274,7 @@ class _PostCardState extends State<PostCard> {
               ),
             ),
 
+            // コメント（users/{uid} を購読して最新プロフィールで表示）
             StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
                   .collection('posts')
@@ -294,32 +301,10 @@ class _PostCardState extends State<PostCard> {
                   children: [
                     ...docs.map((d) {
                       final c = d.data() as Map<String, dynamic>;
-                      final name = (c['userName'] ?? 'ユーザー').toString();
+                      final commentUid = (c['userId'] ?? '').toString();
+                      final fallbackName = (c['userName'] ?? 'ユーザー').toString();
                       final text = (c['text'] ?? '').toString();
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const CircleAvatar(radius: 12, child: Icon(Icons.person, size: 14)),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: RichText(
-                                text: TextSpan(
-                                  style: Theme.of(context).textTheme.bodyMedium,
-                                  children: [
-                                    TextSpan(
-                                      text: '$name  ',
-                                      style: const TextStyle(fontWeight: FontWeight.w600),
-                                    ),
-                                    TextSpan(text: text),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
+                      return _CommentRow(userId: commentUid, fallbackName: fallbackName, text: text);
                     }),
                     if ((snap.data?.size ?? 0) >= _commentLimit)
                       Align(
@@ -372,10 +357,7 @@ class _ImagesPagerState extends State<_ImagesPager> {
   var _index = 0;
 
   @override
-  void dispose() {
-    _pc.dispose();
-    super.dispose();
-  }
+  void dispose() { _pc.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
@@ -390,7 +372,7 @@ class _ImagesPagerState extends State<_ImagesPager> {
             itemCount: widget.urls.length,
             onPageChanged: (i) => setState(() => _index = i),
             itemBuilder: (_, i) => FittedBox(
-              fit: BoxFit.contain, // 画像全体が見える
+              fit: BoxFit.contain,
               child: Image.network(
                 widget.urls[i],
                 gaplessPlayback: true,
@@ -409,8 +391,7 @@ class _ImagesPagerState extends State<_ImagesPager> {
               children: List.generate(
                 widget.urls.length,
                 (i) => Container(
-                  width: 6,
-                  height: 6,
+                  width: 6, height: 6,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: i == _index ? Colors.white : Colors.white54,
@@ -420,6 +401,112 @@ class _ImagesPagerState extends State<_ImagesPager> {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// 投稿主プロフィール（users/{uid} を購読）
+class _UserHeader extends StatelessWidget {
+  const _UserHeader({required this.userId, required this.fallbackName});
+  final String? userId;
+  final String fallbackName;
+
+  @override
+  Widget build(BuildContext context) {
+    if (userId == null || userId!.isEmpty) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircleAvatar(radius: 12, child: Icon(Icons.person, size: 14)),
+          const SizedBox(width: 8),
+          Flexible(child: Text(fallbackName, overflow: TextOverflow.ellipsis)),
+        ],
+      );
+    }
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('users').doc(userId).snapshots(),
+      builder: (context, snap) {
+        String name = fallbackName;
+        String? photoUrl;
+        if (snap.hasData && snap.data!.exists) {
+          final m = snap.data!.data()!;
+          name = (m['displayName'] ?? name).toString();
+          final p = (m['photoUrl'] ?? '').toString();
+          photoUrl = p.isEmpty ? null : p;
+        }
+
+        final avatar = (photoUrl == null)
+            ? const CircleAvatar(radius: 12, child: Icon(Icons.person, size: 14))
+            : CircleAvatar(radius: 12, backgroundImage: NetworkImage(photoUrl!));
+
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            avatar,
+            const SizedBox(width: 8),
+            Flexible(child: Text(name, overflow: TextOverflow.ellipsis)),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// コメント1行（users/{uid} を購読して最新プロフィールで表示）
+class _CommentRow extends StatelessWidget {
+  const _CommentRow({required this.userId, required this.fallbackName, required this.text});
+  final String userId;
+  final String fallbackName;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    if (userId.isEmpty) {
+      return _fallbackRow(fallbackName);
+    }
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('users').doc(userId).snapshots(),
+      builder: (context, snap) {
+        String name = fallbackName;
+        String? photoUrl;
+        if (snap.hasData && snap.data!.exists) {
+          final m = snap.data!.data()!;
+          name = (m['displayName'] ?? name).toString();
+          final p = (m['photoUrl'] ?? '').toString();
+          photoUrl = p.isEmpty ? null : p;
+        }
+        return _row(name, photoUrl);
+      },
+    );
+  }
+
+  Widget _fallbackRow(String name) => _row(name, null);
+
+  Widget _row(String name, String? photoUrl) {
+    final avatar = (photoUrl == null)
+        ? const CircleAvatar(radius: 12, child: Icon(Icons.person, size: 14))
+        : CircleAvatar(radius: 12, backgroundImage: NetworkImage(photoUrl));
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          avatar,
+          const SizedBox(width: 8),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: const TextStyle(color: Colors.black87),
+                children: [
+                  TextSpan(text: '$name  ', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  TextSpan(text: text),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

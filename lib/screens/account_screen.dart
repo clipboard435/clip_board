@@ -1,3 +1,4 @@
+// lib/screens/account_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -35,53 +36,52 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   Future<void> _loadStats() async {
-  try {
-    final postsQuery = FirebaseFirestore.instance
-        .collection('posts')
-        .where('userId', isEqualTo: uid);
-
-    // ① 投稿の取得（件数＋合計値計算に使う）
-    final postsSnap = await postsQuery.get();
-    postCount = postsSnap.size; // ← Aggregateではなく size を使用
-
-    // ② 自己紹介
-    final userDoc =
-        await FirebaseFirestore.instance.collection('users').doc(uid).get();
-    bio = (userDoc.data()?['bio'] ?? '') as String;
-
-    // ③ フォロワー / フォロー中（サブコレクションがある場合）
     try {
-      final folSnap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('followers')
-          .get();
-      followerCount = folSnap.size; // ← size
-    } catch (_) {}
-    try {
-      final fol2Snap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .collection('following')
-          .get();
-      followingCount = fol2Snap.size; // ← size
-    } catch (_) {}
+      final postsQuery = FirebaseFirestore.instance
+          .collection('posts')
+          .where('userId', isEqualTo: uid);
 
-    // ④ もらった いいね / クリップ の合計
-    int likeSum = 0;
-    int clipSum = 0;
-    for (final d in postsSnap.docs) {
-      final m = d.data() as Map<String, dynamic>;
-      likeSum += (m['likeCount'] ?? 0) as int;
-      clipSum += (m['clipCount'] ?? 0) as int;
+      // ① 投稿の取得（件数＋合計値計算に使う）
+      final postsSnap = await postsQuery.get();
+      postCount = postsSnap.size; // Aggregateではなく size を使用
+
+      // ② 自己紹介
+      final userDoc =
+          await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      bio = (userDoc.data()?['bio'] ?? '') as String;
+
+      // ③ フォロワー / フォロー中（サブコレクションがある場合）
+      try {
+        final folSnap = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('followers')
+            .get();
+        followerCount = folSnap.size; // size
+      } catch (_) {}
+      try {
+        final fol2Snap = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('following')
+            .get();
+        followingCount = fol2Snap.size; // size
+      } catch (_) {}
+
+      // ④ もらった いいね / クリップ の合計
+      int likeSum = 0;
+      int clipSum = 0;
+      for (final d in postsSnap.docs) {
+        final m = d.data() as Map<String, dynamic>;
+        likeSum += (m['likeCount'] ?? 0) as int;
+        clipSum += (m['clipCount'] ?? 0) as int;
+      }
+      receivedLikeSum = likeSum;
+      receivedClipSum = clipSum;
+    } finally {
+      if (mounted) setState(() => loadingStats = false);
     }
-    receivedLikeSum = likeSum;
-    receivedClipSum = clipSum;
-  } finally {
-    if (mounted) setState(() => loadingStats = false);
   }
-}
-
 
   @override
   Widget build(BuildContext context) {
@@ -105,22 +105,27 @@ class _AccountScreenState extends State<AccountScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // --- ヘッダ（アイコン＋名前＋統計） ---
+              // --- ヘッダ（テキストの表示名はそのまま） ---
               Text(displayName, style: nameStyle),
               const SizedBox(height: 8),
+
+              // --- 既存レイアウトを維持：左にAvatar / 右にStats ---
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Avatar
-                  const CircleAvatar(radius: 32, child: Icon(Icons.person, size: 28)),
+                  // ▼▼ ここだけ差し替え：Reactive（最新 photoUrl を購読＋キャッシュバスター） ▼▼
+                  _ReactiveAvatar(uid: uid, radius: 32),
                   const SizedBox(width: 16),
-                  // Stats
+
+                  // Stats（既存のまま）
                   Expanded(
                     child: loadingStats
-                        ? const Center(child: Padding(
-                            padding: EdgeInsets.only(top: 16),
-                            child: CircularProgressIndicator(),
-                          ))
+                        ? const Center(
+                            child: Padding(
+                              padding: EdgeInsets.only(top: 16),
+                              child: CircularProgressIndicator(),
+                            ),
+                          )
                         : _StatsTable(
                             postCount: postCount,
                             followerCount: followerCount,
@@ -134,8 +139,7 @@ class _AccountScreenState extends State<AccountScreen> {
 
               const SizedBox(height: 16),
               // --- 自己紹介 + 編集ボタン ---
-              if (bio.isNotEmpty)
-                Text(bio),
+              if (bio.isNotEmpty) Text(bio),
               const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
@@ -145,7 +149,7 @@ class _AccountScreenState extends State<AccountScreen> {
                       context,
                       MaterialPageRoute(builder: (_) => const ProfileEditScreen()),
                     );
-                    _loadStats(); // 変更反映
+                    _loadStats(); // 変更反映（stats と bio 再読込）
                   },
                   child: const Text('プロフィールを編集する'),
                 ),
@@ -214,7 +218,6 @@ class _AccountScreenState extends State<AccountScreen> {
                 alignment: Alignment.center,
                 child: TextButton(
                   onPressed: () {
-                    // 既存の FavoritesScreen を使ってください
                     Navigator.of(context).pushNamed('/favorites');
                   },
                   child: const Text('すべてのお気に入りを見る'),
@@ -386,6 +389,69 @@ class _StatsTable extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// 最新のプロフィール画像を購読して、キャッシュバスター付きで表示する Avatar
+class _ReactiveAvatar extends StatelessWidget {
+  const _ReactiveAvatar({required this.uid, this.radius = 32});
+  final String uid;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
+      builder: (context, snap) {
+        String? photoUrl;
+        int version = 0;
+
+        if (snap.hasData && snap.data!.exists) {
+          final m = snap.data!.data()!;
+          final p = (m['photoUrl'] ?? '').toString();
+          photoUrl = p.isEmpty ? null : p;
+
+          final ts = m['photoUpdatedAt'];
+          if (ts is Timestamp) {
+            version = ts.seconds;
+          } else if (ts is int) {
+            version = ts;
+          }
+        }
+
+        String? showUrl;
+        if (photoUrl != null) {
+          final sep = photoUrl!.contains('?') ? '&' : '?';
+          showUrl = '$photoUrl${sep}v=$version';
+        }
+
+        if (showUrl == null) {
+          return const CircleAvatar(radius: 32, child: Icon(Icons.person, size: 28));
+        }
+
+        return CircleAvatar(
+          radius: radius,
+          backgroundColor: Colors.transparent,
+          child: ClipOval(
+            child: Image.network(
+              showUrl,
+              key: ValueKey(showUrl),
+              width: radius * 2,
+              height: radius * 2,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const Icon(Icons.person, size: 28),
+              loadingBuilder: (c, w, p) => p == null
+                  ? w
+                  : SizedBox(
+                      width: radius * 2,
+                      height: radius * 2,
+                      child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                    ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
