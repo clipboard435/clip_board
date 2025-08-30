@@ -362,14 +362,60 @@ class _TwoColumnGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (tab == _Tab.posts) {
+      // まず userId で読む（orderBy しない → インデックス不要）
+      final q1 = FirebaseFirestore.instance
+          .collection('posts')
+          .where('userId', isEqualTo: uid);
+
+      return StreamBuilder<QuerySnapshot>(
+        stream: q1.snapshots(),
+        builder: (context, snap1) {
+          if (snap1.connectionState == ConnectionState.waiting) {
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+          final docs1 = snap1.data?.docs ?? [];
+
+          if (docs1.isNotEmpty) {
+            final sorted = _sortByCreatedAtDesc(docs1);
+            return _buildGrid(sorted, onTapTile);
+          }
+
+          // 旧データ互換：フィールド名が 'uid' の投稿も拾う
+          final q2 = FirebaseFirestore.instance
+              .collection('posts')
+              .where('uid', isEqualTo: uid);
+
+          return StreamBuilder<QuerySnapshot>(
+            stream: q2.snapshots(),
+            builder: (context, snap2) {
+              if (snap2.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              final docs2 = snap2.data?.docs ?? [];
+              if (docs2.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: Text('まだ投稿がありません')),
+                );
+              }
+              final sorted = _sortByCreatedAtDesc(docs2);
+              return _buildGrid(sorted, onTapTile);
+            },
+          );
+        },
+      );
+    }
+
+    // いいね / クリップは従来どおり
     Query q;
     switch (tab) {
-      case _Tab.posts:
-        q = FirebaseFirestore.instance
-            .collection('posts')
-            .where('userId', isEqualTo: uid)
-            .orderBy('createdAt', descending: true);
-        break;
       case _Tab.likes:
         q = FirebaseFirestore.instance
             .collection('posts')
@@ -380,6 +426,8 @@ class _TwoColumnGrid extends StatelessWidget {
             .collection('posts')
             .where('clippedBy', arrayContains: uid);
         break;
+      default:
+        q = FirebaseFirestore.instance.collection('posts').limit(0); // ここは来ない
     }
 
     return StreamBuilder<QuerySnapshot>(
@@ -394,54 +442,74 @@ class _TwoColumnGrid extends StatelessWidget {
         final docs = snap.data?.docs ?? [];
         if (docs.isEmpty) {
           final msg = switch (tab) {
-            _Tab.posts => 'まだ投稿がありません',
             _Tab.likes => 'まだ いいね した投稿がありません',
             _Tab.clips => 'まだクリップがありません',
+            _ => 'まだ投稿がありません',
           };
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 24),
             child: Center(child: Text(msg)),
           );
         }
+        // いいね／クリップは createdAt 無くても OK。念のため並び替え
+        final sorted = _sortByCreatedAtDesc(docs);
+        return _buildGrid(sorted, onTapTile);
+      },
+    );
+  }
 
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 1,
+  List<QueryDocumentSnapshot> _sortByCreatedAtDesc(List<QueryDocumentSnapshot> docs) {
+    final list = [...docs];
+    list.sort((a, b) {
+      final ma = a.data() as Map<String, dynamic>;
+      final mb = b.data() as Map<String, dynamic>;
+      final ta = ma['createdAt'];
+      final tb = mb['createdAt'];
+      final va = ta is Timestamp ? ta : Timestamp(0, 0);
+      final vb = tb is Timestamp ? tb : Timestamp(0, 0);
+      return vb.compareTo(va); // desc
+    });
+    return list;
+  }
+
+  Widget _buildGrid(List<QueryDocumentSnapshot> docs,
+      void Function(QueryDocumentSnapshot) onTap) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2, // 二列
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: 1,
+      ),
+      itemCount: docs.length,
+      itemBuilder: (_, i) {
+        final doc = docs[i];
+        final data = doc.data() as Map<String, dynamic>;
+        final images = (data['images'] as List?)
+                ?.whereType<String>()
+                .map((s) => s.trim())
+                .toList() ??
+            <String>[];
+        final thumb = images.isNotEmpty ? images.first : (data['imageUrl'] ?? '');
+
+        return InkWell(
+          onTap: () => onTap(doc),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: AspectRatio(
+              aspectRatio: 1,
+              child: thumb.toString().isEmpty
+                  ? const ColoredBox(color: Color(0x11000000))
+                  : Image.network(
+                      thumb,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                          const Icon(Icons.broken_image),
+                    ),
+            ),
           ),
-          itemCount: docs.length,
-          itemBuilder: (_, i) {
-            final doc = docs[i];
-            final data = doc.data() as Map<String, dynamic>;
-            final images = (data['images'] as List?)
-                    ?.whereType<String>()
-                    .map((s) => s.trim())
-                    .toList() ??
-                <String>[];
-            final thumb = images.isNotEmpty ? images.first : (data['imageUrl'] ?? '');
-
-            return InkWell(
-              onTap: () => onTapTile(doc),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: AspectRatio(
-                  aspectRatio: 1,
-                  child: thumb.toString().isEmpty
-                      ? const ColoredBox(color: Color(0x11000000))
-                      : Image.network(
-                          thumb,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              const Icon(Icons.broken_image),
-                        ),
-                ),
-              ),
-            );
-          },
         );
       },
     );
