@@ -273,6 +273,9 @@ class _AccountScreenState extends State<AccountScreen> {
         <String>[];
     final urls = images.isNotEmpty ? images : [(data['imageUrl'] ?? '').toString()];
 
+    // ★ 投稿主 UID（新旧フィールド両対応）
+    final posterUid = (data['userId'] ?? data['uid'] ?? '').toString();
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -296,6 +299,7 @@ class _AccountScreenState extends State<AccountScreen> {
                   child: PostCard(
                     postId: doc.id,
                     images: urls,
+                    userId: posterUid, 
                     userName: (data['userName'] ?? 'ユーザー').toString(),
                     text: (data['text'] ?? '').toString(),
                     likedBy: (data['likedBy'] as List?)?.whereType<String>().toList() ?? <String>[],

@@ -427,18 +427,32 @@ class _UserHeader extends StatelessWidget {
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance.collection('users').doc(userId).snapshots(),
       builder: (context, snap) {
+        // フォールバック初期値
         String name = fallbackName;
-        String? photoUrl;
+        String? photoUrlWithBust;
+
         if (snap.hasData && snap.data!.exists) {
           final m = snap.data!.data()!;
-          name = (m['displayName'] ?? name).toString();
-          final p = (m['photoUrl'] ?? '').toString();
-          photoUrl = p.isEmpty ? null : p;
+          final dn = (m['displayName'] ?? '').toString().trim();
+          if (dn.isNotEmpty) name = dn;
+
+          final p = (m['photoUrl'] ?? '').toString().trim();
+          if (p.isNotEmpty) {
+            int version = 0;
+            final ts = m['photoUpdatedAt'];
+            if (ts is Timestamp) {
+              version = ts.seconds;
+            } else if (ts is int) {
+              version = ts;
+            }
+            final sep = p.contains('?') ? '&' : '?';
+            photoUrlWithBust = version > 0 ? '$p${sep}v=$version' : p;
+          }
         }
 
-        final avatar = (photoUrl == null)
+        final avatar = (photoUrlWithBust == null)
             ? const CircleAvatar(radius: 12, child: Icon(Icons.person, size: 14))
-            : CircleAvatar(radius: 12, backgroundImage: NetworkImage(photoUrl!));
+            : CircleAvatar(radius: 12, backgroundImage: NetworkImage(photoUrlWithBust!));
 
         return Row(
           mainAxisSize: MainAxisSize.min,
@@ -469,14 +483,27 @@ class _CommentRow extends StatelessWidget {
       stream: FirebaseFirestore.instance.collection('users').doc(userId).snapshots(),
       builder: (context, snap) {
         String name = fallbackName;
-        String? photoUrl;
+        String? photoUrlWithBust;
+
         if (snap.hasData && snap.data!.exists) {
           final m = snap.data!.data()!;
-          name = (m['displayName'] ?? name).toString();
-          final p = (m['photoUrl'] ?? '').toString();
-          photoUrl = p.isEmpty ? null : p;
+          final dn = (m['displayName'] ?? '').toString().trim();
+          if (dn.isNotEmpty) name = dn;
+
+          final p = (m['photoUrl'] ?? '').toString().trim();
+          if (p.isNotEmpty) {
+            int version = 0;
+            final ts = m['photoUpdatedAt'];
+            if (ts is Timestamp) {
+              version = ts.seconds;
+            } else if (ts is int) {
+              version = ts;
+            }
+            final sep = p.contains('?') ? '&' : '?';
+            photoUrlWithBust = version > 0 ? '$p${sep}v=$version' : p;
+          }
         }
-        return _row(name, photoUrl);
+        return _row(name, photoUrlWithBust);
       },
     );
   }
@@ -484,7 +511,7 @@ class _CommentRow extends StatelessWidget {
   Widget _fallbackRow(String name) => _row(name, null);
 
   Widget _row(String name, String? photoUrl) {
-    final avatar = (photoUrl == null)
+    final avatar = (photoUrl == null || photoUrl.isEmpty)
         ? const CircleAvatar(radius: 12, child: Icon(Icons.person, size: 14))
         : CircleAvatar(radius: 12, backgroundImage: NetworkImage(photoUrl));
     return Padding(
