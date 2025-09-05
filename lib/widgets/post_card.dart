@@ -137,11 +137,39 @@ class _PostCardState extends State<PostCard> {
     );
   }
 
+  void _openEditor(BuildContext context) {
+    // 例：PostEditorScreen を編集モードで開く
+    // Navigator.push(context, MaterialPageRoute(builder: (_) => PostEditorScreen(postId: widget.postId)));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('編集を開く（実装予定）')));
+  }
+
+  void _confirmDelete(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('削除しますか？'),
+        content: const Text('この操作は取り消せません。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('削除', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (ok == true) {
+      // TODO: 削除処理（Functions連携 or クライアント側で画像/コメント削除 → posts/{postId} delete）
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('削除処理（実装予定）')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final images =
         (widget.images as List?)?.whereType<String>().map((s) => s.trim()).toList() ?? <String>[];
+
+        // ① build内の先頭あたりで判定を用意
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    final isOwner = currentUid != null && currentUid == (widget.userId ?? '');
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -162,6 +190,7 @@ class _PostCardState extends State<PostCard> {
           ),
           const SizedBox(height: 8),
 
+          
           // ここを「ユーザー名の横にボタン」を並べるレイアウトに戻す
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -170,6 +199,20 @@ class _PostCardState extends State<PostCard> {
               Expanded(
                 child: _UserHeader(userId: widget.userId, fallbackName: widget.userName),
               ),
+              // ★ ここに三点メニュー（自分の投稿の時だけ表示）
+              if (isOwner)
+                PopupMenuButton<String>(
+                  onSelected: (v) {
+                    if (v == 'edit') _openEditor(context);
+                    if (v == 'delete') _confirmDelete(context);
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'edit', child: Text('編集')),
+                    PopupMenuItem(value: 'delete', child: Text('削除')),
+                  ],
+                  icon: const Icon(Icons.more_vert),
+                  tooltip: 'その他',
+                ),
 
               // 右側：アクション  🛒 / ♡ / 📎
               IconButton(
